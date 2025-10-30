@@ -6,31 +6,62 @@ A comprehensive skill for Claude that provides expert guidance on PocketBase bac
 
 This skill helps Claude (and Claude Code) correctly implement PocketBase permissions and hooks - two areas where LLMs commonly struggle due to their nuanced behavior and gotchas.
 
+## Version Compatibility
+
+This skill is current for **PocketBase v0.23 and later** (including v0.30.x, v0.31.x as of January 2025).
+
+### Major Breaking Changes in v0.23.0
+
+PocketBase v0.23.0 introduced significant breaking changes:
+- **API Rules**: `@request.data.*` renamed to `@request.body.*`
+- **Router**: Echo replaced with Go 1.22 net/http mux
+- **File Uploads**: Changed from append to replace behavior for multi-file fields
+- **Architecture**: DAO package merged into core.App
+
+**Upgrading from <v0.23?** See official migration guides:
+- JSVM (hooks): https://pocketbase.io/v023upgrade/jsvm/
+- Go: https://pocketbase.io/v023upgrade/go/
+
+### Version History
+- **v0.31.x** (Latest - January 2025): Current stable release
+- **v0.30.x**: Security improvements, relation filtering restrictions
+- **v0.23.0** (2024): Major breaking changes, new architecture
+- **<v0.23**: Legacy versions (not covered by this skill)
+
 ## What's Included
 
 ### Core Skill (SKILL.md)
 - Core workflow for PocketBase development
+- Production security essentials (NEW)
 - Critical concepts for API rules and permissions
 - Hook execution chain and timing
 - Common pitfalls and debugging strategies
+- Realtime subscriptions security (NEW)
 
 ### Reference Files
 
-1. **permission_patterns.md** - 50+ permission rule examples
+1. **production_checklist.md** - Complete deployment checklist (NEW)
+   - Pre-deployment security checklist
+   - Infrastructure setup
+   - Backup strategies
+   - Monitoring and maintenance
+   - Emergency procedures
+
+2. **permission_patterns.md** - 50+ permission rule examples
    - Authentication rules
    - Ownership rules
-   - Field validation rules
+   - Field validation rules (including file upload limitations - NEW)
    - Role-based rules
    - Relationship rules
    - Complex conditions
 
-2. **hook_guide.md** - Comprehensive hook reference
+3. **hook_guide.md** - Comprehensive hook reference
    - Hook lifecycle and execution order
    - Model hooks vs Request hooks
    - When each hook fires
    - Choosing the right hook for your use case
 
-3. **hook_patterns.md** - Practical implementations
+4. **hook_patterns.md** - Practical implementations
    - Auto-population patterns
    - Validation patterns
    - Notification patterns
@@ -39,12 +70,13 @@ This skill helps Claude (and Claude Code) correctly implement PocketBase permiss
    - Audit logging
    - File management
 
-4. **api_reference.md** - Quick API lookup
+5. **api_reference.md** - Quick API lookup
    - DAO methods
    - Record operations
    - HTTP operations
    - Email operations
    - Filter syntax
+   - Backup & recovery (NEW)
 
 ## Installation
 
@@ -87,15 +119,19 @@ Simply have this repository available when working with PocketBase projects. Cla
 PocketBase's permission system and hooks have subtle behaviors that are hard for LLMs to get right:
 
 1. **Rules are filters**: Failed listRule returns empty array, not error
-2. **Superusers bypass rules**: Testing as admin masks permission bugs  
+2. **Superusers bypass rules**: Testing as admin masks permission bugs
 3. **Hook timing matters**: Before vs after e.next() affects what persists
 4. **Model vs Request hooks**: Easy to use wrong type and wonder why it doesn't fire
-5. **Infinite loops**: Updating records in hooks without withoutHooks()
+5. **Infinite loops**: Updating records in hooks without proper guards
+6. **Production security gaps**: Default settings expose credentials as plaintext
+7. **File upload validation**: Special modifiers don't work with files
+8. **Realtime filtering**: Client-side filters are ignored for security
 
 This skill codifies the knowledge from:
-- Official PocketBase documentation
+- Official PocketBase documentation (v0.23+)
 - GitHub discussions and issues
 - Common mistakes in real-world usage
+- Production security best practices
 
 ## Structure
 
@@ -103,6 +139,7 @@ This skill codifies the knowledge from:
 pocketbase/
 ├── SKILL.md                           # Core guidance (loaded when skill triggers)
 └── references/                        # Loaded as needed
+    ├── production_checklist.md        # Production deployment guide (NEW)
     ├── permission_patterns.md         # Permission examples
     ├── hook_guide.md                  # Hook reference
     ├── hook_patterns.md               # Hook implementations
