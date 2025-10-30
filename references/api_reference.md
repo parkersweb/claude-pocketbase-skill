@@ -408,12 +408,139 @@ records.forEach(record => {
 onRecordCreate((e) => {
     // These all happen in the same transaction
     e.record.set("status", "pending")
-    
+
     // Create related record
     const relatedRecord = new Record($app.dao().findCollectionByNameOrId("related"))
     relatedRecord.set("parentId", e.record.id)
     $app.dao().saveRecord(relatedRecord)
-    
+
     e.next()  // Transaction commits after this
 }, "main_collection")
 ```
+
+## Backup & Recovery
+
+### Manual Backup
+
+The entire PocketBase application state is contained in the `pb_data` directory.
+
+```bash
+# Stop PocketBase for transactional safety (optional but recommended)
+systemctl stop pocketbase  # or kill the process
+
+# Backup the entire pb_data directory
+cp -r pb_data pb_data_backup_$(date +%Y%m%d_%H%M%S)
+
+# Or create compressed backup
+tar -czf pb_data_backup_$(date +%Y%m%d_%H%M%S).tar.gz pb_data
+
+# Restart PocketBase
+systemctl start pocketbase
+```
+
+### Automated Backups via Hooks
+
+```javascript
+/// <reference path="../pb_data/types.d.ts" />
+
+// Customize what gets backed up
+onBackupCreate((e) => {
+    // Exclude unwanted directories (added in v0.30+)
+    e.exclude.push("lost+found")
+    e.exclude.push("temp")
+
+    console.log("Creating backup:", e.name)
+
+    e.next()
+})
+
+// Post-backup actions
+onBackupRestore((e) => {
+    console.log("Restoring from backup:", e.name)
+
+    e.next()
+})
+```
+
+### Restore from Backup
+
+```bash
+# Stop PocketBase
+systemctl stop pocketbase
+
+# Backup current state (safety)
+mv pb_data pb_data_old
+
+# Restore from backup
+tar -xzf pb_data_backup_YYYYMMDD_HHMMSS.tar.gz
+# or: cp -r pb_data_backup_YYYYMMDD_HHMMSS pb_data
+
+# Start PocketBase
+systemctl start pocketbase
+
+# Verify restoration
+curl http://localhost:8090/api/health
+```
+
+### What Gets Backed Up
+
+The `pb_data` directory contains:
+- `data.db` - Main SQLite database (all records, collections, settings)
+- `logs.db` - Request logs (if enabled)
+- `storage/` - Uploaded files
+- `backups/` - Automatic backups (if configured)
+
+### Production Best Practices
+
+1. **Backup Schedule**: Daily backups minimum for production
+2. **Transactional Safety**: Stop PocketBase or use backup hooks
+3. **Offsite Storage**: Copy backups to separate server/cloud storage
+4. **Test Restores**: Regularly verify backup restoration works
+5. **Retention Policy**: Keep multiple backup generations (e.g., 30 days)
+6. **Monitor Backups**: Alert on backup failures
+
+### Backup Script Example
+
+```bash
+#!/bin/bash
+# save as: /usr/local/bin/backup-pocketbase.sh
+
+DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_DIR="/backups/pocketbase"
+PB_DATA="/opt/pocketbase/pb_data"
+RETENTION_DAYS=30
+
+# Create backup directory
+mkdir -p "$BACKUP_DIR"
+
+# Create backup (PocketBase keeps running)
+tar -czf "$BACKUP_DIR/pb_data_$DATE.tar.gz" -C "$(dirname "$PB_DATA")" "$(basename "$PB_DATA")"
+
+# Verify backup was created
+if [ -f "$BACKUP_DIR/pb_data_$DATE.tar.gz" ]; then
+    echo "Backup created: pb_data_$DATE.tar.gz"
+
+    # Copy to remote server (optional)
+    # rsync -az "$BACKUP_DIR/pb_data_$DATE.tar.gz" user@backup-server:/backups/
+
+    # Remove old backups
+    find "$BACKUP_DIR" -name "pb_data_*.tar.gz" -mtime +$RETENTION_DAYS -delete
+else
+    echo "ERROR: Backup failed!"
+    exit 1
+fi
+```
+
+Add to crontab for daily backups:
+```bash
+# Run daily at 2 AM
+0 2 * * * /usr/local/bin/backup-pocketbase.sh >> /var/log/pocketbase-backup.log 2>&1
+```
+
+### Important Notes
+
+- PocketBase can run during backups, but stopping ensures consistency
+- Settings encryption cannot be disabled once enabled
+- Backups include all collections, settings, files, and logs
+- Database size grows over time - monitor disk space
+- Backup before major updates or migrations

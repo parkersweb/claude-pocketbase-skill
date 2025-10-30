@@ -14,6 +14,41 @@ Guide for working with PocketBase as a backend, with specialized focus on the tw
 3. **Implement hooks** - Add server-side logic in `pb_hooks/` directory
 4. **Test thoroughly** - Verify permissions and hooks trigger correctly
 
+## Production Security (CRITICAL)
+
+**⚠️ These are ESSENTIAL for production deployments - not optional:**
+
+### 1. Encrypt Settings
+By default, PocketBase stores SMTP passwords and S3 credentials as **PLAIN TEXT** in the database.
+- Enable encryption: Settings > Application > "Encrypt settings"
+- Do this BEFORE entering production credentials
+
+### 2. Enable Rate Limiting
+PocketBase v0.23+ includes built-in rate limiting to prevent abuse and DoS attacks.
+- Configure: Dashboard > Settings > Application
+- Prevents excessive auth requests, record creation spam
+- Can use reverse proxy rate limiting for advanced needs
+
+### 3. Protect Admin Endpoints
+Use reverse proxy (nginx/caddy) to whitelist IPs for `/api/admins/*` endpoints.
+
+### 4. Enable Superuser MFA
+Add MFA to `_superusers` collection for additional security layer.
+- Requires one-time password (email code) for superuser auth
+- Settings > Collections > _superusers > Options
+
+### 5. Use HTTPS
+PocketBase supports auto-managed TLS with Let's Encrypt:
+```bash
+./pocketbase serve --https example.com:443
+```
+Or use reverse proxy (nginx, caddy) for more complex setups.
+
+### 6. Regular Backups
+Backup entire `pb_data` directory regularly (see references/production_checklist.md).
+
+**Never expose PocketBase directly to internet without these protections!**
+
 ## API Rules (Permissions)
 
 ### Critical Concepts
@@ -91,8 +126,36 @@ AFTER e.next() → after validation & DB operation (may not be persisted yet)
 - Syntax error preventing hook registration
 
 **Problem: Infinite recursion**
-- Calling `e.dao.saveRecord()` inside update hook without `withoutHooks()`
-- Solution: Use `e.dao.withoutHooks().saveRecord(record)` to skip hooks
+- Calling `$app.dao().saveRecord()` inside update hook without preventing re-trigger
+- **JavaScript Solution**: Use conditional guards to prevent re-execution
+- **NEVER use `$app.unsafeWithoutHooks()`** - bypasses ALL validations including system checks
+- Better approach: Check if processing already done before modifying
+
+```javascript
+// ❌ DANGEROUS - Bypasses system validations
+onRecordUpdate((e) => {
+    e.next()
+    $app.unsafeWithoutHooks().save(e.record)  // UNSAFE!
+}, "tasks")
+
+// ✅ CORRECT - Use conditional guard
+onRecordUpdate((e) => {
+    if (e.record.get("processed") === true) {
+        e.next()
+        return
+    }
+    e.record.set("processed", true)
+    e.next()
+}, "tasks")
+
+// ✅ ACCEPTABLE - Update different collection without hooks
+onRecordAfterUpdateSuccess((e) => {
+    const related = $app.dao().findRecordById("other", e.record.get("relatedId"))
+    related.set("count", related.get("count") + 1)
+    $app.dao().withoutHooks().saveRecord(related)  // OK for related records
+    e.next()
+}, "tasks")
+```
 
 **Problem: Changes in hook not reflected**
 - Modifying record AFTER `e.next()` in Request hooks won't affect response
@@ -138,12 +201,51 @@ fieldName = "value"
 // Submitted request data
 @request.body.fieldName = "value"
 
-// Auth user field  
+// Auth user field
 @request.auth.fieldName = "value"
 
 // Related record via relation field
 relationField.otherField = "value"
 ```
+
+## Realtime Subscriptions & Security
+
+### How Realtime Respects API Rules
+
+**Critical understanding**: Realtime subscriptions enforce API rules automatically.
+
+- **Single record subscription** → Uses collection's `viewRule`
+- **Collection subscription** → Uses collection's `listRule`
+
+```javascript
+// Client subscribes to collection
+pb.collection('posts').subscribe('*', (data) => {
+    console.log(data.action, data.record)
+})
+// User only receives events for records they can LIST per listRule
+```
+
+### No Client-Side Filtering
+
+**Important**: You CANNOT filter subscriptions client-side for security.
+
+```javascript
+// ❌ This filter parameter is IGNORED by PocketBase
+pb.collection('posts').subscribe('*', {
+    filter: 'status="draft"'  // Does nothing!
+})
+
+// ✅ Filter via API rules instead
+// In collection's listRule:
+status = "published" || @request.auth.id = author
+```
+
+### Security Implications
+
+- Users only receive realtime events for records matching their `listRule`/`viewRule`
+- Records becoming inaccessible don't emit "removed" events (performance)
+- Check `@request.context = "realtime"` in rules if you need realtime-specific logic
+- Realtime is secure by default - respects same permissions as REST API
 
 ## File Structure
 

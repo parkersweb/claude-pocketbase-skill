@@ -186,7 +186,7 @@ createRule: @request.auth.id != "" && (@request.body.type != "premium" || @reque
 - Only works with `@request.body.*` fields
 - Does NOT work with file uploads (technical limitation)
 
-### :length - Check Array Length  
+### :length - Check Array Length
 ```
 fieldName:length = 0           // Empty array
 fieldName:length > 0           // Has items
@@ -194,6 +194,67 @@ fieldName:length > 0           // Has items
 ```
 - Works with multi-select, relation, and file fields
 - Does NOT work with uploaded files in `@request.body.*` (technical limitation)
+
+### File Upload Limitations (CRITICAL)
+
+**⚠️ Important**: The `:isset` and `:length` modifiers **DO NOT work** with file uploads in `@request.body.*`.
+
+❌ **These FAIL with file uploads:**
+```
+// ❌ Cannot check if files were uploaded
+@request.body.avatar:isset = true
+
+// ❌ Cannot count uploaded files
+@request.body.attachments:length <= 3
+
+// ❌ Cannot validate file presence in createRule
+createRule: @request.auth.id != "" && @request.body.document:isset = true
+```
+
+✅ **For file validation, use JavaScript hooks instead:**
+```javascript
+/// <reference path="../pb_data/types.d.ts" />
+
+// Validate file count
+onRecordCreateRequest((e) => {
+    const files = e.httpContext.request().multipartForm()?.file["attachments"]
+    if (files && files.length > 3) {
+        throw new Error("Maximum 3 files allowed")
+    }
+    e.next()
+}, "documents")
+
+// Validate file types
+onRecordCreateRequest((e) => {
+    const files = e.httpContext.request().multipartForm()?.file["document"]
+    if (files && files.length > 0) {
+        const allowedTypes = ["application/pdf", "image/jpeg", "image/png"]
+        const fileType = files[0].header.get("Content-Type")
+        if (!allowedTypes.includes(fileType)) {
+            throw new Error("Only PDF, JPEG, and PNG files allowed")
+        }
+    }
+    e.next()
+}, "documents")
+
+// Require file upload
+onRecordCreateRequest((e) => {
+    const files = e.httpContext.request().multipartForm()?.file["avatar"]
+    if (!files || files.length === 0) {
+        throw new Error("Avatar image is required")
+    }
+    e.next()
+}, "profiles")
+```
+
+**File Security Checklist:**
+- Set max file size in collection field options (default: 5MB, max: ~8GB)
+- Use "Protected" files option for sensitive files (requires ViewRule to access)
+- Validate file types **server-side** in hooks, not just client-side
+- Consider enabling file token authentication for protected files
+- Use appropriate ViewRule to control who can download files
+
+**Technical limitation**: Files are evaluated separately from other body parameters and cannot be serialized for rule evaluation.
 
 ## Common Mistakes
 
